@@ -14,6 +14,9 @@ uint32_t COMM_API enclave_alloc(
     COMM_OUT_OPT uint32_t* enclave_error)
 {
     int ret = ENCLAVE_UNEXPECTED;
+    int enclave_fd, type;
+    int map_flags = MAP_SHARED | MAP_FIXED;
+    void* addr_mapped = NULL;
     SE_TRACE(SE_TRACE_DEBUG,
         "enclave_alloc for %p ( %llX ) with alloc flags = 0x%lX\n",
             target_addr, target_size, alloc_flags);
@@ -32,19 +35,18 @@ uint32_t COMM_API enclave_alloc(
         }
         goto out;
     }
-    int enclave_fd = get_file_handle_from_address(target_addr);
+    enclave_fd = get_file_handle_from_address(target_addr);
     if (enclave_fd == -1)
     {
         ret = ENCLAVE_INVALID_ADDRESS;
         goto out;
     }
-    int map_flags = MAP_SHARED | MAP_FIXED;
     //!TODO: support COMMIT_NOW when kernel supports
     if (alloc_flags & ENCLAVE_EMA_COMMIT_NOW)
     {
     }
     //CET is not supported yet
-    int type = data_properties;
+    type = data_properties;
     if((type == ENCLAVE_PAGE_SS_FIRST) | (type == ENCLAVE_PAGE_SS_REST))
     {
         ret = ENCLAVE_NOT_SUPPORTED;
@@ -55,8 +57,8 @@ uint32_t COMM_API enclave_alloc(
         ret = ENCLAVE_INVALID_PARAMETER;
         goto out;
     }
-    void *out = mmap(target_addr, target_size, PROT_WRITE | PROT_READ, map_flags, enclave_fd, 0);
-    if (out == MAP_FAILED)
+    addr_mapped = mmap(target_addr, target_size, PROT_WRITE | PROT_READ, map_flags, enclave_fd, 0);
+    if (addr_mapped == MAP_FAILED)
     {
         ret = errno;
         SE_TRACE(SE_TRACE_WARNING, "mmap failed, error = %d\n", ret);
@@ -82,19 +84,19 @@ uint64_t get_offset_for_address(uint64_t target_address)
     return (uint64_t)target_address - (uint64_t)enclave_base_addr;
 }
 
-static int emodt(int fd, uint64_t addr, size_t length, uint64_t type)
+static int emodt(int fd, void *addr, size_t length, uint64_t type)
 {
     struct sgx_enclave_modify_types ioc;
     if (length == 0)
         return EINVAL;
 
     SE_TRACE(SE_TRACE_DEBUG,
-        "MODT for 0x%llX ( %llX ), type: 0x%llX\n",
+        "MODT for %p ( %llX ), type: 0x%llX\n",
             addr, length, type);
     memset(&ioc, 0, sizeof(ioc));
 
     ioc.page_type = type;
-    ioc.offset = get_offset_for_address(addr);
+    ioc.offset = get_offset_for_address((uint64_t)addr);
     ioc.length = length;
     do
     {
@@ -104,7 +106,7 @@ static int emodt(int fd, uint64_t addr, size_t length, uint64_t type)
         { //total failure
             int err = errno;
             SE_TRACE(SE_TRACE_WARNING,
-                "MODT failed, error = %d for 0x%llX ( %llX ), type: 0x%llX\n",
+                "MODT failed, error = %d for %p ( %llX ), type: 0x%llX\n",
                     err, addr, length, type);
             return err;
         }
@@ -118,16 +120,16 @@ static int emodt(int fd, uint64_t addr, size_t length, uint64_t type)
     return 0;
 }
 
-static int trim(int fd, uint64_t addr, size_t length)
+static int trim(int fd, void *addr, size_t length)
 {
     return emodt(fd, addr, length, (SGX_EMA_PAGE_TYPE_TRIM >> SGX_EMA_PAGE_TYPE_SHIFT));
 }
-static int mktcs(int fd, uint64_t addr, size_t length)
+static int mktcs(int fd, void *addr, size_t length)
 {
 
     return emodt(fd, addr, length, (SGX_EMA_PAGE_TYPE_TCS >> SGX_EMA_PAGE_TYPE_SHIFT));
 }
-static int trim_accept(int fd, uint64_t addr, size_t length)
+static int trim_accept(int fd, void *addr, size_t length)
 {
     struct sgx_enclave_remove_pages ioc;
     memset(&ioc, 0, sizeof(ioc));
@@ -135,7 +137,7 @@ static int trim_accept(int fd, uint64_t addr, size_t length)
     SE_TRACE(SE_TRACE_DEBUG,
         "REMOVE for 0x%llX ( %llX )\n",
             addr, length);
-    ioc.offset = get_offset_for_address(addr);
+    ioc.offset = get_offset_for_address((uint64_t)addr);
     ioc.length = length;
     int ret = 0;
     do {
@@ -155,7 +157,7 @@ static int trim_accept(int fd, uint64_t addr, size_t length)
 
     return 0;
 }
-static int emodpr(int fd, uint64_t addr, size_t length, uint64_t prot)
+static int emodpr(int fd, void *addr, size_t length, uint64_t prot)
 {
     struct sgx_enclave_restrict_permissions ioc;
     if (length == 0)
@@ -167,7 +169,7 @@ static int emodpr(int fd, uint64_t addr, size_t length, uint64_t prot)
     memset(&ioc, 0, sizeof(ioc));
 
     ioc.permissions = prot;
-    ioc.offset = get_offset_for_address(addr);
+    ioc.offset = get_offset_for_address((uint64_t)addr);
     ioc.length = length;
 
     do
@@ -193,7 +195,7 @@ static int emodpr(int fd, uint64_t addr, size_t length, uint64_t prot)
 
 // legacy support for EDMM
 
-static int trim_accept_legacy(int fd, uint64_t addr, size_t len)
+static int trim_accept_legacy(int fd, void *addr, size_t len)
 {
     sgx_range params;
     memset(&params, 0, sizeof(sgx_range));
@@ -210,7 +212,7 @@ static int trim_accept_legacy(int fd, uint64_t addr, size_t len)
     return SGX_SUCCESS;
 }
 
-static int trim_legacy(int fd, uint64_t fromaddr, uint64_t len)
+static int trim_legacy(int fd, void *fromaddr, uint64_t len)
 {
     sgx_range params;
     memset(&params, 0, sizeof(sgx_range));
@@ -226,7 +228,7 @@ static int trim_legacy(int fd, uint64_t fromaddr, uint64_t len)
     return SGX_SUCCESS;
 }
 
-static int mktcs_legacy(int fd, uint64_t tcs_addr, size_t len)
+static int mktcs_legacy(int fd, void *tcs_addr, size_t len)
 {
     if (len != SE_PAGE_SIZE)
         return EINVAL;
@@ -243,7 +245,7 @@ static int mktcs_legacy(int fd, uint64_t tcs_addr, size_t len)
     return SGX_SUCCESS;
 }
 
-static int emodpr_legacy(int fd, uint64_t addr, uint64_t size, uint64_t flag)
+static int emodpr_legacy(int fd, void *addr, uint64_t size, uint64_t flag)
 {
     sgx_modification_param params;
     memset(&params, 0, sizeof(sgx_modification_param));
@@ -268,6 +270,12 @@ uint32_t COMM_API enclave_modify(
     COMM_OUT_OPT uint32_t* enclave_error)
 {
     int ret = ENCLAVE_UNEXPECTED;
+    int type_to, type_from, prot_to, prot_from, fd;
+    function<int(int, void *, size_t)> _trim = trim;
+    function<int(int, void *, size_t)> _trim_accept = trim_accept;
+    function<int(int, void *, size_t)> _mktcs = mktcs;
+    function<int(int, void *, size_t, int)> _emodpr = emodpr;
+    uint64_t enclave_base;
     SE_TRACE(SE_TRACE_DEBUG,
         "enclave_modify for %p ( %llX ) from 0x%lX to %lX\n",
             target_addr, target_size, from_data_properties, to_data_properties);
@@ -276,7 +284,7 @@ uint32_t COMM_API enclave_modify(
         ret = ENCLAVE_NOT_SUPPORTED;
         goto out;
     }
-    uint64_t enclave_base = (uint64_t)get_enclave_base_address_from_address(target_addr);
+    enclave_base = (uint64_t)get_enclave_base_address_from_address(target_addr);
     if (enclave_base == 0)
     {
         ret = ENCLAVE_INVALID_ADDRESS;
@@ -287,11 +295,7 @@ uint32_t COMM_API enclave_modify(
         ret = ENCLAVE_INVALID_PARAMETER;
         goto out;
     }
-    function<int(int, uint64_t, size_t)> _trim = trim;
-    function<int(int, uint64_t, size_t)> _trim_accept = trim_accept;
-    function<int(int, uint64_t, size_t)> _mktcs = mktcs;
-    function<int(int, uint64_t, size_t, int)> _emodpr = emodpr;
-    int fd = get_file_handle_from_address(target_addr);
+    fd = get_file_handle_from_address(target_addr);
     if (s_driver_type == SGX_DRIVER_OUT_OF_TREE)
     {
         _trim = trim_legacy;
@@ -306,15 +310,15 @@ uint32_t COMM_API enclave_modify(
         goto out;
     }
 
-    int type_to = (to_data_properties & SGX_EMA_PAGE_TYPE_MASK);
-    int type_from = (from_data_properties & SGX_EMA_PAGE_TYPE_MASK);
+    type_to = (to_data_properties & SGX_EMA_PAGE_TYPE_MASK);
+    type_from = (from_data_properties & SGX_EMA_PAGE_TYPE_MASK);
     if (type_from == SGX_EMA_PAGE_TYPE_TRIM && type_to != SGX_EMA_PAGE_TYPE_TRIM)
     {
         ret = ENCLAVE_INVALID_PARAMETER;
         goto out;
     }
-    int prot_to = (to_data_properties & PROT_MASK);
-    int prot_from = (from_data_properties & PROT_MASK);
+    prot_to = (to_data_properties & PROT_MASK);
+    prot_from = (from_data_properties & PROT_MASK);
     if ((prot_to != prot_from) && (type_to != type_from))
     {
         ret = ENCLAVE_INVALID_PARAMETER;
@@ -352,7 +356,7 @@ uint32_t COMM_API enclave_modify(
             ret = ENCLAVE_INVALID_PARAMETER;
             goto out;
         }
-        ret = _trim(fd, addr, length);
+        ret = _trim(fd, target_addr, target_size);
         if (ret)
             ret =error_driver2api(-1, ret);
         goto out;
@@ -368,7 +372,7 @@ uint32_t COMM_API enclave_modify(
             ret = ENCLAVE_INVALID_PARAMETER;
             goto out;
         }
-        ret =  _mktcs(fd, addr, length);
+        ret =  _mktcs(fd, target_addr, target_size);
         if (ret)
             ret = error_driver2api(-1, ret);
         goto out;
@@ -383,7 +387,7 @@ uint32_t COMM_API enclave_modify(
     // separate mprotect is needed to change pte.R to pte.NONE
     if (prot_to == prot_from && prot_to == PROT_NONE)
     {
-        ret = mprotect((void *)addr, length, prot_to);
+        ret = mprotect((void *)target_addr, target_size, prot_to);
         if (ret == -1) {
             ret = error_driver2api(ret, errno);
             goto out;
@@ -398,7 +402,7 @@ uint32_t COMM_API enclave_modify(
     // Permissions changes. Only do emodpr for PT_REG pages
     if ((type_from & type_to & SGX_EMA_PAGE_TYPE_MASK) == SGX_EMA_PAGE_TYPE_REG)
     {
-        ret = _emodpr(fd, addr, length, prot_to);
+        ret = _emodpr(fd, target_addr, target_size, prot_to);
         if (ret) {
             ret = error_driver2api(-1, ret);
             goto out;
@@ -412,7 +416,7 @@ uint32_t COMM_API enclave_modify(
     //EACCEPT needs at least pte.R, PROT_NONE case done above.
     if (prot_to != PROT_NONE)
     {
-        ret = mprotect((void *)addr, length, prot_to);
+        ret = mprotect((void *)target_addr, target_size, prot_to);
         if (ret == -1) {
             ret = error_driver2api(ret, errno);
             goto out;
