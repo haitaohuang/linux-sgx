@@ -29,7 +29,6 @@
  *
  */
 
-
 #ifndef _MANAGE_METADATA_H_
 #define _MANAGE_METADATA_H_
 
@@ -59,6 +58,7 @@ typedef enum _para_type_t
     PROVISIONKEY,
     LAUNCHKEY,
     DISABLEDEBUG,
+    //! ENABLEMPX,
     HW,
     TCSNUM,
     TCSMAXNUM,
@@ -111,6 +111,7 @@ public:
     bool user_dynamic();
     sgx_misc_select_t get_config_misc_select();
     sgx_misc_select_t get_config_misc_mask();
+    uint8_t get_meta_versions() { return m_meta_verions; }
 private:
     bool get_time(uint32_t *date);
     bool modify_metadata(const xml_parameter_t *parameter);
@@ -133,7 +134,9 @@ private:
     void* get_rawdata_by_rva(uint64_t rva);
     bool vaildate_elrange_config();
     bool build_elrange_config_entry();
-    bool warn_config();
+    uint64_t calculate_rts_bk_overhead();
+    bool check_config();
+    uint8_t m_meta_verions;
 
     metadata_t *m_metadata;
     BinParser *m_parser;
