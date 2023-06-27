@@ -1,0 +1,58 @@
+#!/bin/sh
+#
+# Copyright (C) 2020 Intel Corporation. All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#
+#   * Redistributions of source code must retain the above copyright
+#     notice, this list of conditions and the following disclaimer.
+#   * Redistributions in binary form must reproduce the above copyright
+#     notice, this list of conditions and the following disclaimer in
+#     the documentation and/or other materials provided with the
+#     distribution.
+#   * Neither the name of Intel Corporation nor the names of its
+#     contributors may be used to endorse or promote products derived
+#     from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+
+set -e
+docker build --target sample --build-arg HEAP_SIZE="0x100000000" --build-arg https_proxy=$https_proxy \
+             --build-arg http_proxy=$http_proxy -t sgx_sample -f ./Dockerfile ./
+
+# Requires kernel SGX cgroup support. Build with CONFIG_CGROUP_SGX_EPC=y from
+# this branch: https://github.com/haitaohuang/linux/tree/sgx_cg_upstream
+CNAME=sgx_sample
+if [ ! -d "/sys/fs/cgroup/misc" ]; then
+    echo "cgroups v2 is detected."
+    CGROUP="/sys/fs/cgroup/$CNAME.slice"
+    CPATH="$CNAME.slice"
+    if [ ! -d $CGROUP ]; then
+        sudo cgcreate -g misc:$CNAME.slice
+    fi
+else
+    echo "cgroups v1 is in detected."
+    CGROUP="/sys/fs/cgroup/misc/docker/$CNAME"
+    CPATH="docker/$CNAME"
+    if [ ! -d $CGROUP ]; then
+	sudo cgcreate -g misc:docker/$CNAME
+    fi
+fi
+
+echo "sgx_epc 20480000" |sudo tee $CGROUP/misc.max
+# Another container should expose AESM and its socket in volume aesmd-socket
+# Replace /dev/sgx_enclave with /dev/isgx if you use the Legacy Launch Control driver
+docker run --cgroup-parent=$CPATH --env http_proxy --env https_proxy --device=/dev/sgx_enclave -v aesmd-socket:/var/run/aesmd -it sgx_sample

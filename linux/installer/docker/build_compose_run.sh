@@ -37,5 +37,8 @@ docker build --target sample --build-arg https_proxy=$https_proxy \
              --build-arg http_proxy=$http_proxy -t sgx_sample -f ./Dockerfile ./
 
 docker volume create --driver local --opt type=tmpfs --opt device=tmpfs --opt o=rw aesmd-socket
-
-docker-compose --verbose up
+if type docker-compose >/dev/null 2>&1; then
+    docker-compose --verbose up
+else
+    docker compose --verbose up
+fi
