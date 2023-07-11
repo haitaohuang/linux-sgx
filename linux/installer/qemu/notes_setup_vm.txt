@@ -1,0 +1,58 @@
+# Download an OS image and confoure
+'''
+wget https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img
+qemu-img convert -O qcow2 jammy-server-cloudimg-amd64.img ubuntui2204-image.qcow2
+qemu-img resize ubuntui2204-image.qcow2 +30G
+cloud-localds user-data.iso user-data meta-data
+'''
+
+# add looped shared
+'''
+qemu-img create -f raw shared.img 1G
+sudo losetup -fP --show shared.img
+'''
+
+# The above command will print a loop device, let's say it's /dev/loop0. Now format it:
+'''
+sudo mkfs.ext4 /dev/loop0
+'''
+
+# The host can mount the image  via a loop device.
+'''
+sudo mkdir /mnt/shared
+sudo mount /dev/loop0 /mnt/shared
+'''
+
+# Stuff things into it. After that detach the loop device:
+'''
+sudo losetup -d /dev/loop0
+'''
+
+# Attach the Disk Image to the VM
+'''
+qemu-system-x86_64  -nographic -enable-kvm -m 512 -drive file=/path/to/your/guest.img -drive file=/path/to/shared.img
+'''
+# Mount the Disk Image in the Guest the same way
+'''
+myvm> mkdir /mnt/shared
+myvm> mount /dev/sdb /mnt/shared
+'''
+
+# if every thing works, create cgroup on host
+'''
+cgcreate -g misc:qemu
+'''
+
+# use this to launch sgx vm with prealloc in the group created above 
+'''
+cgexec -g misc:qemu  qemu-system-x86_64 \
+    -nographic -enable-kvm -cpu host,+sgx,+sgx2 \
+    -object memory-backend-epc,id=mem1,size=8M,prealloc=on \
+    -M sgx-epc.0.memdev=mem1,sgx-epc.0.node=0 \
+    -drive file=ubuntu2204-img.qcow2,format=qcow2 \
+    -cdrom user-data2.iso \
+    -drive file=shared_disk.img \
+    -m 4096 -smp 8 $1 \
+'''
+
+# take out 'prealloc=on' to turnoff prealloc 
